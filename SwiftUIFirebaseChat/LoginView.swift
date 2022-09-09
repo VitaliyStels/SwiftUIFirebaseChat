@@ -7,31 +7,22 @@
 
 import SwiftUI
 import Firebase
+import FirebaseStorage
+import FirebaseFirestore
 
 
-
-class FirebaseManager: NSObject {
-    
-    let auth: Auth
-//    let storage: Storage
-    
-    static let shared = FirebaseManager()
-    override init() {
-        FirebaseApp.configure()
-        
-        self.auth = Auth.auth()
-//        self.storage = Storage.storage()
-        
-        super.init()
-    }
-}
 
 struct LoginView: View {
     
-    @State var isLogin = false
-    @State var email = ""
-    @State var password = ""
-    @State var shouldShowImagePicker = false
+    let didCompleteLoginProcess: () -> ()
+    
+    
+    @State private var isLogin = false
+    @State private var email = "123@gmail.com"
+    @State private var password = "123123"
+    
+    
+    @State private var shouldShowImagePicker = false
     @State var image: UIImage?
     
     
@@ -119,6 +110,11 @@ struct LoginView: View {
     @State var loginStatusMessage = ""
     
     private func createNewAccount() {
+        if image == nil {
+            self.loginStatusMessage = "You must select an image"
+            return
+        }
+        
         FirebaseManager.shared.auth.createUser(withEmail: email, password: password) { result, err in
             if let err = err {
                 print("Failed to create account", err)
@@ -127,14 +123,58 @@ struct LoginView: View {
             }
             
             print("User \(result?.user.uid ?? "") created successfully")
-            self.persistImageToStorage()
+            loginUser()
+            persistImageToStorage()
             
         }
     }
     
     private func persistImageToStorage() {
-        Storage.storage().reference(withPath: <#T##String#>)
+        guard let uid = FirebaseManager.shared.auth.currentUser?.uid else { return }
+        let ref = FirebaseManager.shared.storage.reference(withPath: uid)
+        guard let imageData = self.image?.jpegData(compressionQuality: 0.5) else { return }
+        
+        ref.putData(imageData, metadata: nil) { metadata, err in
+            if let err = err {
+                self.loginStatusMessage = "Failed to push image to the storage: \(err)"
+                return
+            }
+            
+        }
+        
+        ref.downloadURL { url, err in
+            if let err = err {
+                self.loginStatusMessage = "Failed to retrieve downloadURL: \(err)"
+                return
+                
+            }
+            
+            self.loginStatusMessage = "Successfully stored image with URL: \(url?.absoluteString ?? "")"
+            
+            guard let url = url else { return }
+            self.storeUserInformation(imageProfileUrl: url)
+        }
+        
     }
+    
+    private func storeUserInformation(imageProfileUrl: URL) {
+        guard let uid = FirebaseManager.shared.auth.currentUser?.uid else {
+            return }
+        let userData = ["email" : self.email, "uid" : uid, "profileImageUrl" : imageProfileUrl.absoluteString]
+        FirebaseManager.shared.firestore.collection("users")
+            .document(uid).setData(userData) { err in
+                if let err = err {
+                    print(err)
+                    self.loginStatusMessage = "\(err)"
+                    return
+            }
+                
+                print("Success")
+                self.didCompleteLoginProcess()
+                
+            }
+    }
+    
     
     private func loginUser() {
         FirebaseManager.shared.auth.signIn(withEmail: email, password: password) { result, err in
@@ -146,6 +186,7 @@ struct LoginView: View {
             
             print("User \(result?.user.uid ?? "") logged successfully")
             self.loginStatusMessage = "Successfully logged in as user: \(result?.user.uid ?? "")"
+            self.didCompleteLoginProcess()
         }
     }
     
@@ -155,6 +196,8 @@ struct LoginView: View {
 
 struct LoginView_Previews: PreviewProvider {
     static var previews: some View {
-        LoginView()
+        LoginView(didCompleteLoginProcess: {
+            
+        })
     }
 }
